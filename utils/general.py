@@ -9,7 +9,9 @@ import random
 import re
 import subprocess
 import time
+import json
 from pathlib import Path
+from PIL import Image
 
 import cv2
 import numpy as np
@@ -890,3 +892,120 @@ def increment_path(path, exist_ok=True, sep=''):
         i = [int(m.groups()[0]) for m in matches if m]  # indices
         n = max(i) + 1 if i else 2  # increment number
         return f"{path}{sep}{n}"  # update path
+
+def custom_summarize(evaluator):
+    """
+    https://github.com/cocodataset/cocoapi/blob/master/PythonAPI/pycocotools/cocoeval.py
+    Customization of pycocotools summarize function to print metrics for more detections 
+    """
+    def _summarize( ap=1, iouThr=None, areaRng='all', maxDets=100):
+        p = evaluator.params
+        iStr = ' {:<18} {} @[ IoU={:<9} | area={:>6s} | maxDets={:>3d} ] = {:0.3f}'
+        titleStr = 'Average Precision' if ap == 1 else 'Average Recall'
+        typeStr = '(AP)' if ap==1 else '(AR)'
+        iouStr = '{:0.2f}:{:0.2f}'.format(p.iouThrs[0], p.iouThrs[-1]) \
+            if iouThr is None else '{:0.2f}'.format(iouThr)
+
+        aind = [i for i, aRng in enumerate(p.areaRngLbl) if aRng == areaRng]
+        mind = [i for i, mDet in enumerate(p.maxDets) if mDet == maxDets]
+        if ap == 1:
+            # dimension of precision: [TxRxKxAxM]
+            s = evaluator.eval['precision']
+            # IoU
+            if iouThr is not None:
+                t = np.where(iouThr == p.iouThrs)[0]
+                s = s[t]
+            s = s[:,:,:,aind,mind]
+        else:
+            # dimension of recall: [TxKxAxM]
+            s = evaluator.eval['recall']
+            if iouThr is not None:
+                t = np.where(iouThr == p.iouThrs)[0]
+                s = s[t]
+            s = s[:,:,aind,mind]
+        if len(s[s>-1])==0:
+            mean_s = -1
+        else:
+            mean_s = np.mean(s[s>-1])
+        print(iStr.format(titleStr, typeStr, iouStr, areaRng, maxDets, mean_s))
+        return mean_s
+    def _summarizeDets():
+        stats = np.zeros((12,))
+        stats[0] = _summarize(1, maxDets=evaluator.params.maxDets[0])
+        stats[1] = _summarize(1, iouThr=.5, maxDets=evaluator.params.maxDets[0])
+        stats[2] = _summarize(1, iouThr=.75, maxDets=evaluator.params.maxDets[0])
+        stats[3] = _summarize(1, areaRng='small', maxDets=evaluator.params.maxDets[0])
+        stats[4] = _summarize(1, areaRng='medium', maxDets=evaluator.params.maxDets[0])
+        stats[5] = _summarize(1, areaRng='large', maxDets=evaluator.params.maxDets[0])
+        stats[6] = _summarize(0, maxDets=evaluator.params.maxDets[0])
+        stats[9] = _summarize(0, areaRng='small', maxDets=evaluator.params.maxDets[0])
+        stats[10] = _summarize(0, areaRng='medium', maxDets=evaluator.params.maxDets[0])
+        stats[11] = _summarize(0, areaRng='large', maxDets=evaluator.params.maxDets[0])
+        return stats
+    if not evaluator.eval:
+        raise Exception('Please run accumulate() first')
+
+    evaluator.stats = _summarizeDets()
+
+
+def yolo_to_coco_json(path):
+    """
+    Convert all .txt labels in <path>/labels to COCO JSON format
+    using <path>/images .jpg files
+    """
+
+    cls = 1 # Face class index
+    plc = 6 # Decimal places of float numbers
+    path_images = os.path.join(path, 'images')
+    path_labels = os.path.join(path, 'labels')
+    img_count = len(glob.glob1(path_images,'*.jpg'))
+
+    json_dict = {'images': [], 
+                 'categories': [{"id": cls, "name": "face"} ],
+                 'annotations': []}
+
+    bbox_id = 1 # Bounding box id
+
+    for i in range(img_count):
+        # Image numbers in format 00000 are names of files 
+        image_id = i+1
+        name = "{:05d}".format(image_id)
+
+        img = Image.open(os.path.join(path_images, name + '.jpg'))
+        width, height = img.size
+        json_dict['images'].append({
+            "id": image_id, 
+            "file_name": f"{name}.jpg", 
+            "height": height,
+            "width": width
+        })
+        
+        label_file = open(os.path.join(path_labels, name + '.txt'), 'r')
+        for line in label_file:
+            label = []
+            for word in line.split():
+                label.append(float(word))
+            x,y,w,h = label[1:]
+            w *= width
+            h *= height
+            x = x * width - w / 2.0
+            y = y * height - h / 2.0
+
+            json_dict['annotations'].append({
+                "image_id": image_id,
+                "category_id": cls,
+                "bbox": [round(x,plc),round(y,plc),round(w,plc),round(h,plc)],
+                "area": round(w*h, plc),
+                "iscrowd": 0,
+                "id": bbox_id,
+            })
+                
+            bbox_id += 1
+
+    if not os.path.exists('coco'):
+        os.makedirs('coco')
+    if not os.path.exists('coco/annotations'):
+        os.makedirs('coco/annotations')
+
+    with open('coco/annotations/gt_coco_labels.json', 'w') as f:
+        json.dump(json_dict, f)

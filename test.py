@@ -12,7 +12,8 @@ from tqdm import tqdm
 from models.experimental import attempt_load
 from utils.datasets import create_dataloader
 from utils.general import coco80_to_coco91_class, check_dataset, check_file, check_img_size, check_requirements, \
-    box_iou, non_max_suppression, scale_coords, xyxy2xywh, xywh2xyxy, set_logging, increment_path, colorstr
+    box_iou, non_max_suppression, scale_coords, xyxy2xywh, xywh2xyxy, set_logging, increment_path, colorstr,\
+    custom_summarize, yolo_to_coco_json
 from utils.metrics import ap_per_class, ConfusionMatrix
 from utils.plots import plot_images, output_to_target, plot_study_txt
 from utils.torch_utils import select_device, time_synchronized, TracedModel
@@ -171,7 +172,7 @@ def test(data,
                 box[:, :2] -= box[:, 2:] / 2  # xy center to top-left corner
                 for p, b in zip(pred.tolist(), box.tolist()):
                     jdict.append({'image_id': image_id,
-                                  'category_id': coco91class[int(p[5])] if is_coco else int(p[5]),
+                                  'category_id': 1, #coco91class[int(p[5])] if is_coco else int(p[5]),
                                   'bbox': [round(x, 3) for x in b],
                                   'score': round(p[4], 5)})
 
@@ -253,8 +254,11 @@ def test(data,
 
     # Save JSON
     if save_json and len(jdict):
+        # Generate a json file with labels in coco format 
+        yolo_to_coco_json(data[opt.task])
+
         w = Path(weights[0] if isinstance(weights, list) else weights).stem if weights is not None else ''  # weights
-        anno_json = './coco/annotations/instances_val2017.json'  # annotations json
+        anno_json = './coco/annotations/gt_coco_labels.json'  # annotations json
         pred_json = str(save_dir / f"{w}_predictions.json")  # predictions json
         print('\nEvaluating pycocotools mAP... saving %s...' % pred_json)
         with open(pred_json, 'w') as f:
@@ -267,11 +271,14 @@ def test(data,
             anno = COCO(anno_json)  # init annotations api
             pred = anno.loadRes(pred_json)  # init predictions api
             eval = COCOeval(anno, pred, 'bbox')
-            if is_coco:
-                eval.params.imgIds = [int(Path(x).stem) for x in dataloader.dataset.img_files]  # image IDs to evaluate
+
+            # non_max_suppression.max_det default 300 detections per image
+            nms_max_det = 300
+            eval.params.maxDets = [nms_max_det]
             eval.evaluate()
             eval.accumulate()
-            eval.summarize()
+            custom_summarize(eval)
+
             map, map50 = eval.stats[:2]  # update results (mAP@0.5:0.95, mAP@0.5)
         except Exception as e:
             print(f'pycocotools unable to run: {e}')
