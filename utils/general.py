@@ -994,7 +994,10 @@ def yolo_to_coco_json(path):
             json_dict['annotations'].append({
                 "image_id": image_id,
                 "category_id": cls,
-                "bbox": [round(x,plc),round(y,plc),round(w,plc),round(h,plc)],
+                "bbox": [max(round(x, plc), 0),
+                         max(round(y, plc), 0),
+                         max(round(w, plc), 0),
+                         max(round(h,plc), 0)],
                 "area": round(w*h, plc),
                 "iscrowd": 0,
                 "id": bbox_id,
