@@ -1,0 +1,18 @@
+# Usage: pip install -r requirements-torch.txt
+# Run after requirements.txt is installed
+
+# PyTorch 1.12.1 with CUDA 10.2
+-i https://download.pytorch.org/whl/cu102
+torch==1.12.1+cu102
+torchvision==0.13.1+cu102
+
+# PyTorch 1.13.1 with CUDA 11.6
+# -i https://download.pytorch.org/whl/cu116
+# torch==1.13.1+cu116
+# torchvision==0.14.1+cu116
+
+# PyTorch for CPU
+# torch==1.12.1
+# torchvision==0.13.1
+
+# Note: PyTorch >1.13.1 not tested
